@@ -74,7 +74,8 @@ async function start() {
   btn.textContent = "准备中…";
   try {
     // 复用麦克风流：首次授权后，之后每次按下都能秒开录
-    if (!stream || !stream.active) stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 关掉浏览器的噪声抑制/回声消除——它们专杀非人声，环境声（猫叫雨声）会被掐死在麦克风口
+    if (!stream || !stream.active) stream = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: false, echoCancellation: false, autoGainControl: true } });
   } catch (_) { tip.textContent = "需要麦克风权限（要在HTTPS或localhost下）"; btn.textContent = "按住说话"; holding = false; return; }
   if (!holding) { btn.textContent = "按住说话"; return; }  // 授权/预热期间手已松开
   chunks = [];
@@ -105,10 +106,13 @@ async function send() {
     card.className = "card";
     const rel = d.relative && Object.keys(d.relative).length
       ? `<div class="rel">和平时比: ${Object.entries(d.relative).map(([k,v]) => k+" "+v).join("，")}</div>` : "";
+    const envLine = (d.env_sounds && d.env_sounds.length)
+      ? `<div class="rel">环境音: ${d.env_sounds.map(x => x.label).join("、")}</div>` : "";
+    const spLine = (d.speaker && d.similarity !== undefined && d.text === "") ? `<div class="rel">声纹: ${d.speaker}</div>` : "";
     card.innerHTML =
       `<div class="emo-row"><span class="emo-tag">${EMOJI[d.emotion] || "💭"} ${d.emotion}</span>` +
       `<span class="hint">${d.hint || ""}</span></div>` +
-      `<div class="said">${d.text}</div>` + rel;
+      `<div class="said">${d.text}</div>` + rel + envLine + spLine;
     // 反悔键：删掉这条记录，基线也当没听过
     const del = document.createElement("span");
     del.className = "del"; del.textContent = "✕";

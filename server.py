@@ -26,6 +26,8 @@ import requests
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+import earsplus  # 声纹锁+环境声耳朵（2026-07-23升级，独立模块不动主逻辑）
+
 BASE_DIR = Path(__file__).resolve().parent
 
 # ── 配置：Python自己读.env（已存在的环境变量优先），彻底绕开shell解析的坑 ──
@@ -227,6 +229,28 @@ async def listen(file: UploadFile = File(...)):
         feats = acoustic_features(str(wav))
         if feats.get("duration_s", 0) < 0.5:
             return JSONResponse({"error": "太短啦，再说一次"}, status_code=400)
+        # 声纹锁：转写之前判断是谁——非主人的声音不转写不上云，只记事件（认人不记话）
+        speaker, similarity = earsplus.speaker_check(str(wav), feats.get("duration_s", 0))
+        env = earsplus.env_sounds(str(wav))
+        if speaker not in (earsplus.OWNER, "学习中"):
+            if speaker.startswith("注册中·"):
+                hint = f"{speaker.split('·', 1)[1]} 的声纹注册中"
+            elif speaker == "陌生声音":
+                hint = "有别的声音出现（未记录内容）"
+            else:
+                hint = f"{speaker}说话了（内容未记录）"
+            entry = {
+                "ts": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
+                "text": "", "emotion": "", "confidence": 0, "hint": hint,
+                "features": {"duration_s": feats.get("duration_s", 0)}, "relative": {},
+                "speaker": speaker, "similarity": similarity, "env_sounds": env, "audio": "",
+            }
+            with _data_lock:
+                with LOG_FILE.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            return {"ts": entry["ts"], "text": "", "emotion": "",
+                    "hint": hint, "speaker": speaker,
+                    "similarity": similarity, "env_sounds": env}
         try:
             text = transcribe(str(wav))
         except Exception as exc:
@@ -253,6 +277,7 @@ async def listen(file: UploadFile = File(...)):
         "text": text, "emotion": emo.get("emotion", "平静"),
         "confidence": emo.get("confidence", 0), "hint": emo.get("hint", ""),
         "features": feats, "relative": rel, "audio": clip_name,
+        "speaker": speaker, "similarity": similarity, "env_sounds": env,
     }
     with _data_lock:
         update_profile(feats)  # 判断完再入库，避免这一条污染自己的基线
@@ -262,7 +287,20 @@ async def listen(file: UploadFile = File(...)):
     baseline_n = min(len(load_profile().get("pitch_hz", [])), BASELINE_MIN)
     return {"ts": entry["ts"], "text": text, "emotion": entry["emotion"],
             "confidence": entry["confidence"], "hint": entry["hint"], "relative": rel,
-            "baseline_progress": f"{baseline_n}/{BASELINE_MIN}"}
+            "baseline_progress": f"{baseline_n}/{BASELINE_MIN}",
+            "speaker": speaker, "similarity": similarity, "env_sounds": env}
+
+
+@app.get("/api/earsplus/status")
+def earsplus_status():
+    """声纹注册进度（学习中要攒够样本才开锁）。"""
+    return earsplus.voiceprint_status()
+
+
+@app.post("/api/earsplus/enroll")
+def earsplus_enroll(body: dict):
+    """声纹家谱注册：{"name":"妈妈"} 开始（接下来6段录音归此人），{"name":""} 取消。"""
+    return earsplus.start_enroll(body.get("name", ""))
 
 
 @app.get("/api/recent")
