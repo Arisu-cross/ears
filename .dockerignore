@@ -1,0 +1,11 @@
+.git
+.env
+data/
+docs/
+venv/
+__pycache__/
+*.pyc
+*.bak*
+# 本地沙箱验证用的临时文件，绝不进镜像
+ca-bundle.crt
+Dockerfile.localtest

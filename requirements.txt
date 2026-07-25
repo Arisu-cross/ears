@@ -4,4 +4,8 @@ numpy
 librosa
 python-multipart
 requests
-onnxruntime
+
+# 选装:声纹锁(ECAPA)+ 环境声识别(YAMNet),都需要 models/ 下的 onnx 模型文件。
+# 没装或没下模型时 earsplus 自动优雅关闭,转写与语气分析照常工作。
+# 云端部署默认不装,省一大截构建时间和镜像体积;要开就取消下面这行注释。
+# onnxruntime

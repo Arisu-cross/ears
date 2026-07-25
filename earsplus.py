@@ -216,6 +216,8 @@ def _yamnet():
 
 def env_sounds(wav_path: str) -> list:
     """返回 [{"label": 中文或原名, "score": 0.x}, ...] top几个环境声。失败返回[]。"""
+    if not (YAMNET_ONNX.exists() and YAMNET_CSV.exists()):
+        return []      # 没下模型（或没装 onnxruntime）：环境声耳朵关闭，别每次白跑一趟
     try:
         import librosa
         sess, labels = _yamnet()

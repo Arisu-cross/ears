@@ -85,6 +85,11 @@ async function start() {
   mr.start();
   btn.classList.add("rec"); btn.textContent = "松开听你说";
 }
+// 公网部署要带 token：打开页面时用 ?token=xxx，这里把它透传给每个接口
+const api = (p) => {
+  const t = new URLSearchParams(location.search).get("token");
+  return t ? p + "?token=" + encodeURIComponent(t) : p;
+};
 function stop() {
   holding = false;
   if (mr && mr.state !== "inactive") mr.stop();
@@ -99,7 +104,7 @@ async function send() {
   const fd = new FormData();
   fd.append("file", blob, "voice." + ext);
   try {
-    const r = await fetch("/api/listen", { method: "POST", body: fd });
+    const r = await fetch(api("/api/listen"), { method: "POST", body: fd });
     const d = await r.json();
     if (d.error) { tip.textContent = d.error; return; }
     const card = document.createElement("div");
@@ -118,7 +123,7 @@ async function send() {
     del.className = "del"; del.textContent = "✕";
     del.addEventListener("click", async () => {
       try {
-        await fetch("/api/forget", { method: "POST",
+        await fetch(api("/api/forget"), { method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ts: d.ts }) });
         card.remove(); tip.textContent = "删掉了，就当没听过";
