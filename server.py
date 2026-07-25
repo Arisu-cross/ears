@@ -11,6 +11,7 @@
 
 配置见 .env（Python自己读，不依赖shell）。Windows/Mac/Linux通用。
 """
+import hmac
 import json
 import os
 import statistics
@@ -53,6 +54,8 @@ def _env(name, default=""):
 PROXY = _env("PROXY")  # 例: http://127.0.0.1:7890，云端接口国内直连不通时填
 WEBHOOK = _env("WEBHOOK")  # 分析结果POST到这里，接你自己的AI
 KEEP_AUDIO = os.environ.get("KEEP_AUDIO", "0") == "1"
+# 公网部署必填:没有它任何人都能读走记录、删记录。留空=不鉴权(本机 127.0.0.1 跑才这么用)
+EARS_TOKEN = _env("EARS_TOKEN")
 # 情绪标签：为"家里养了个AI"的场景设计，逗号分隔可自定义
 EMOTIONS = [e.strip() for e in _env(
     "EMOTIONS", "开心,兴奋,撒娇,平静,累,低落,委屈,生气,嘴硬,紧张").split(",") if e.strip()]
@@ -71,6 +74,29 @@ _session.headers["User-Agent"] = "ears/0.1"  # 默认UA会被Cloudflare拦
 _data_lock = threading.Lock()  # moments.jsonl / profile.json 的写操作互斥，防止forget重写时被listen的追加覆盖
 
 app = FastAPI()
+
+
+# ── 鉴权：公网部署的门闩 ──
+
+_OPEN_PATHS = {"/health"}  # healthcheck 要能裸访问
+
+
+@app.middleware("http")
+async def token_gate(request, call_next):
+    """X-Token 头或 ?token= 查询参数二选一。
+    浏览器页面用查询参数(打开 https://…/?token=xxx 即可),服务端调用用头。
+    """
+    if EARS_TOKEN and request.url.path not in _OPEN_PATHS:
+        got = request.headers.get("x-token") or request.query_params.get("token") or ""
+        if not hmac.compare_digest(got, EARS_TOKEN):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "asr": bool(GROQ_KEY), "auth": bool(EARS_TOKEN),
+            "baseline_n": len(load_profile().get("pitch_hz", [])), "need": BASELINE_MIN}
 
 
 # ── 声学特征：她"怎么说的" ──
