@@ -7,5 +7,6 @@ requests
 
 # 选装:声纹锁(ECAPA)+ 环境声识别(YAMNet),都需要 models/ 下的 onnx 模型文件。
 # 没装或没下模型时 earsplus 自动优雅关闭,转写与语气分析照常工作。
-# 云端部署默认不装,省一大截构建时间和镜像体积;要开就取消下面这行注释。
+# 云端构建:onnxruntime 由 Dockerfile 在 --build-arg WITH_ONNX=1 时安装,
+# 连同模型一起,所以这里保持注释。本地手动跑第二阶段才需要放开下面这行。
 # onnxruntime

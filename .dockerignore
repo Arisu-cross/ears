@@ -6,6 +6,9 @@ venv/
 __pycache__/
 *.pyc
 *.bak*
+# 本地若下过模型,不要打进构建上下文——镜像里的模型由 Dockerfile 在
+# WITH_ONNX=1 时联网下载,以它为准(避免把上百 MB 塞进 build context)
+models/
 # 本地沙箱验证用的临时文件，绝不进镜像
 ca-bundle.crt
 Dockerfile.localtest
