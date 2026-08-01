@@ -32,6 +32,29 @@ ECAPA_ONNX = BASE / "models" / "ecapa.onnx"
 
 _lock = threading.Lock()
 
+# ── onnxruntime 内存纪律（2026-08-01）─────────────────────────────────
+# 两个模型吃的都是变长输入（语音条多长，张量就多大）。onnxruntime 默认开
+# CPU arena 分配器：它会为「历史上最大的那次输入」扩容，然后**永不归还**。
+# 于是每来一条更长的语音，常驻内存就上一个台阶，只涨不落。
+# 实测（ECAPA，模拟 12 条 5~240s 语音）：
+#   默认        136MB → 3719MB，阶梯式只涨不落
+#   关 arena    稳定 ~217MB，但单条 240s 瞬时峰值仍有 2262MB
+#   关+截断15s  稳定 ~186MB，峰值 431MB
+# YAMNet 同病较轻：默认 669MB → 关 arena 后 152MB。
+# 两个 session 在同一进程里，默认配置下合计能爬到 4G+ —— 4G 的机器迟早被吃穿。
+# 所以两件事都要做：①关 arena 止住阶梯 ②截断输入焊死峰值。
+ECAPA_MAX_S = 15   # 声纹只需要听几秒就够认声带，15s 很宽裕
+YAMNET_MAX_S = 60  # 环境声要点上下文，关 arena 后 60s 的峰值也很安全
+
+
+def _sess_options():
+    import onnxruntime as ort
+    so = ort.SessionOptions()
+    so.enable_cpu_mem_arena = False   # 别囤内存（这条是止漏的关键）
+    so.intra_op_num_threads = 1       # 2 核机器，多线程只会互相抢
+    return so
+
+
 # ── 声纹：ECAPA-TDNN(ONNX) 说话人嵌入——学的是声带不是麦克风 ──
 
 _ecapa_session = None
@@ -41,7 +64,8 @@ def _ecapa():
     global _ecapa_session
     if _ecapa_session is None:
         import onnxruntime as ort
-        _ecapa_session = ort.InferenceSession(str(ECAPA_ONNX), providers=["CPUExecutionProvider"])
+        _ecapa_session = ort.InferenceSession(
+            str(ECAPA_ONNX), sess_options=_sess_options(), providers=["CPUExecutionProvider"])
     return _ecapa_session
 
 
@@ -54,6 +78,7 @@ def _mfcc_vec(wav_path: str) -> np.ndarray | None:
     y, sr = librosa.load(wav_path, sr=16000, mono=True)
     if len(y) / sr < 0.8:
         return None
+    y = y[:int(ECAPA_MAX_S * sr)]   # 只听开头一段：认声带够用，且焊死内存峰值
     # 预处理照 models/ecapa_preprocess.json：80mel log谱+句级均值归一
     mel = librosa.feature.melspectrogram(
         y=y, sr=16000, n_fft=400, hop_length=160, win_length=400,
@@ -208,7 +233,8 @@ def _yamnet():
     global _yamnet_session, _yamnet_labels
     if _yamnet_session is None:
         import onnxruntime as ort
-        _yamnet_session = ort.InferenceSession(str(YAMNET_ONNX), providers=["CPUExecutionProvider"])
+        _yamnet_session = ort.InferenceSession(
+            str(YAMNET_ONNX), sess_options=_sess_options(), providers=["CPUExecutionProvider"])
         with open(YAMNET_CSV, encoding="utf-8") as f:
             _yamnet_labels = [row["display_name"] for row in csv.DictReader(f)]
     return _yamnet_session, _yamnet_labels
@@ -224,6 +250,7 @@ def env_sounds(wav_path: str) -> list:
         y, _ = librosa.load(wav_path, sr=16000, mono=True)
         if len(y) < 8000:
             return []
+        y = y[:YAMNET_MAX_S * 16000]   # 同上：截断，别让一条长语音把峰值顶穿
         inp = sess.get_inputs()[0]
         wave = y.astype(np.float32)
         feed = {inp.name: wave.reshape(1, -1) if len(inp.shape) == 2 else wave}
