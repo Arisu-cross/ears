@@ -1,0 +1,51 @@
+# 构建 ears 的第二阶段镜像（带 ONNX 声纹/环境声）并推 Docker Hub。
+#
+# 为什么要有这个：ears2 在 Zeabur 是「预构建镜像」部署的，改了源码不会自动生效，
+# 必须重新 build 一个镜像推上去、再让 Zeabur 换 tag。以前是在本机手工 docker build，
+# 这里改成一键触发，省得每次都要有台装了 docker 的机器。
+#
+# 用之前要在仓库 Settings → Secrets and variables → Actions 里加两个 secret：
+#   DOCKERHUB_USERNAME  Docker Hub 用户名（现在用的是 crossandarisu）
+#   DOCKERHUB_TOKEN     Docker Hub 的 Access Token（不是登录密码，去
+#                       hub.docker.com → Account Settings → Personal access tokens 生成）
+#
+# 跑完之后到 Zeabur 换 tag（service id 见私有手册）：
+#   zeabur service update tag --id <ears2 的 service id> --env-id <env id> -t <这次的 tag>
+
+name: build-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "镜像 tag（例：v0.4-memfix）"
+        required: true
+      image:
+        description: "镜像名"
+        required: true
+        default: crossandarisu/ears
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # WITH_ONNX=1 才会装 onnxruntime 并下载两个模型（见 Dockerfile 第二阶段）。
+          # 不加这个的话构建出来的是轻量版，声纹和环境声会静默关闭。
+          build-args: WITH_ONNX=1
+          tags: ${{ inputs.image }}:${{ inputs.tag }}
+          # 服务器是 amd64（Tencent Singapore），别让 buildx 顺手出别的架构
+          platforms: linux/amd64
