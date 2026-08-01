@@ -54,6 +54,13 @@ def _env(name, default=""):
 PROXY = _env("PROXY")  # 例: http://127.0.0.1:7890，云端接口国内直连不通时填
 WEBHOOK = _env("WEBHOOK")  # 分析结果POST到这里，接你自己的AI
 KEEP_AUDIO = os.environ.get("KEEP_AUDIO", "0") == "1"
+# 转写文本要不要留档（2026-08-01 默认改成不留）。
+# 「听懂语气」这个功能从头到尾没用过存下来的 text：基线是 update_profile() 从
+# features 那几个声学数字长出来的，rebuild_profile() 重建时也只读 features。
+# 存文本纯粹是留档，功能上是死的，却把主人说过的每句话都攒在盘上——默认不留更合理。
+# 置 1 可以留（比如你想自己回看历史）。注意：这只管**落盘**，
+# /api/listen 的响应和 webhook 照常带 text，不然接在后面的 AI 就聋了。
+KEEP_TEXT = os.environ.get("KEEP_TEXT", "0") == "1"
 # 公网部署必填:没有它任何人都能读走记录、删记录。留空=不鉴权(本机 127.0.0.1 跑才这么用)
 EARS_TOKEN = _env("EARS_TOKEN")
 # 情绪标签：为"家里养了个AI"的场景设计，逗号分隔可自定义
@@ -223,6 +230,14 @@ def judge(text: str, feats: dict, rel: dict) -> dict:
     return out
 
 
+def for_log(entry: dict) -> dict:
+    """落盘用的副本：KEEP_TEXT=0 时把转写文本抹掉。
+    只影响写进 moments.jsonl 的那一份——响应和 webhook 用的还是原样的 entry。"""
+    if KEEP_TEXT:
+        return entry
+    return {**entry, "text": ""}
+
+
 def fire_webhook(entry: dict) -> None:
     if not WEBHOOK:
         return
@@ -308,7 +323,7 @@ async def listen(file: UploadFile = File(...)):
     with _data_lock:
         update_profile(feats)  # 判断完再入库，避免这一条污染自己的基线
         with LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.write(json.dumps(for_log(entry), ensure_ascii=False) + "\n")
     fire_webhook(entry)
     baseline_n = min(len(load_profile().get("pitch_hz", [])), BASELINE_MIN)
     return {"ts": entry["ts"], "text": text, "emotion": entry["emotion"],
